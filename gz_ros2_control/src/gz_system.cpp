@@ -31,6 +31,8 @@
 #include <gz/sim/components/AngularVelocity.hh>
 #include <gz/sim/components/Imu.hh>
 #include <gz/sim/components/ForceTorque.hh>
+#include <algorithm>
+
 #include <gz/sim/components/JointAxis.hh>
 #include <gz/sim/components/JointForceCmd.hh>
 #include <gz/sim/components/JointPosition.hh>
@@ -594,6 +596,9 @@ void GazeboSimSystem::registerSensors(
     });
 }
 
+GazeboSimSystem::GazeboSimSystem() = default;
+GazeboSimSystem::~GazeboSimSystem() = default;
+
 CallbackReturn
 GazeboSimSystem::on_init(const hardware_interface::HardwareInfo & info)
 {
@@ -779,8 +784,37 @@ hardware_interface::return_type GazeboSimSystem::write(
     if (this->dataPtr->joints_[i].sim_joint == sim::kNullEntity) {
       continue;
     }
-
     if (this->dataPtr->joints_[i].joint_control_method & VELOCITY) {
+      // a leftover force command would keep resetting the dartsim actuator
+      // type and override the velocity servo
+      if (this->dataPtr->ecm->Component<sim::components::JointForceCmd>(
+          this->dataPtr->joints_[i].sim_joint))
+      {
+        this->dataPtr->ecm->RemoveComponent<sim::components::JointForceCmd>(
+          this->dataPtr->joints_[i].sim_joint);
+      }
+
+      double vel_cmd = this->dataPtr->joints_[i].joint_velocity_cmd;
+      const double lower = this->dataPtr->joints_[i].joint_axis.Lower();
+      const double upper = this->dataPtr->joints_[i].joint_axis.Upper();
+      constexpr double kLimitMargin = 1e-3;
+      if (upper - lower > 2 * kLimitMargin) {
+        const double pos = this->dataPtr->joints_[i].joint_position;
+        if ((pos >= upper - kLimitMargin && vel_cmd > 0.0) ||
+          (pos <= lower + kLimitMargin && vel_cmd < 0.0))
+        {
+          vel_cmd = 0.0;
+        }
+        if ((pos >= upper - 1e-7 && vel_cmd < 0.0) ||
+          (pos <= lower + 1e-7 && vel_cmd > 0.0))
+        {
+          this->dataPtr->ecm->CreateComponent(
+            this->dataPtr->joints_[i].sim_joint,
+            sim::components::JointPositionReset(
+              {std::clamp(pos, lower + kLimitMargin, upper - kLimitMargin)}));
+        }
+      }
+
       if (!this->dataPtr->ecm->Component<sim::components::JointVelocityCmd>(
           this->dataPtr->joints_[i].sim_joint))
       {
@@ -791,8 +825,7 @@ hardware_interface::return_type GazeboSimSystem::write(
         const auto jointVelCmd =
           this->dataPtr->ecm->Component<sim::components::JointVelocityCmd>(
           this->dataPtr->joints_[i].sim_joint);
-        *jointVelCmd = sim::components::JointVelocityCmd(
-          {this->dataPtr->joints_[i].joint_velocity_cmd});
+        *jointVelCmd = sim::components::JointVelocityCmd({vel_cmd});
       }
     } else if (this->dataPtr->joints_[i].joint_control_method & POSITION) {
       // Get error in position
@@ -815,6 +848,13 @@ hardware_interface::return_type GazeboSimSystem::write(
         vel->Data()[0] = target_vel;
       }
     } else if (this->dataPtr->joints_[i].joint_control_method & EFFORT) {
+      // symmetric: a leftover velocity servo command would fight the force
+      if (this->dataPtr->ecm->Component<sim::components::JointVelocityCmd>(
+          this->dataPtr->joints_[i].sim_joint))
+      {
+        this->dataPtr->ecm->RemoveComponent<sim::components::JointVelocityCmd>(
+          this->dataPtr->joints_[i].sim_joint);
+      }
       if (!this->dataPtr->ecm->Component<sim::components::JointForceCmd>(
           this->dataPtr->joints_[i].sim_joint))
       {

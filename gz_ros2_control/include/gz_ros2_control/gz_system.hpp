@@ -38,6 +38,11 @@ class GazeboSimSystemPrivate;
 class GazeboSimSystem : public GazeboSimSystemInterface
 {
 public:
+  // out-of-line: subclasses must be able to instantiate constructor and
+  // destructor without the complete GazeboSimSystemPrivate type
+  GazeboSimSystem();
+  ~GazeboSimSystem() override;
+
   // Documentation Inherited
   CallbackReturn on_init(const hardware_interface::HardwareInfo & system_info)
   override;
