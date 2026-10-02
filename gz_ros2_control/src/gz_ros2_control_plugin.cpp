@@ -110,8 +110,10 @@ public:
         logger_, "Initialized robot simulation interface %s!",
         robot_hw_sim_type_str_.c_str());
 
+      hardware_interface::HardwareComponentParams component_params;
+      component_params.hardware_info = individual_hardware_info;
       // initialize hardware
-      import_component(std::move(gzSimSystem), individual_hardware_info);
+      import_component(std::move(gzSimSystem), component_params);
     }
 
     return components_are_loaded_and_initialized_;
